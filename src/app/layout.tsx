@@ -17,13 +17,21 @@ export const metadata: Metadata = {
   description: "Direct market access for farmers",
 };
 
+import { AuthProvider } from "@/context/AuthContext";
+import { MarketTicker } from "@/components/farmer/MarketTicker";
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html
       lang="en"
       className={`${inter.variable} ${robotoMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col font-sans">{children}</body>
+      <body className="min-h-full flex flex-col font-sans">
+        <AuthProvider>
+          <MarketTicker />
+          {children}
+        </AuthProvider>
+      </body>
     </html>
   );
 }

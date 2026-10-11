@@ -45,7 +45,7 @@ export function BuyerRequirementCard() {
 
       <div className="flex flex-col gap-4">
         {mockRequirements.map((req, i) => (
-          <Card key={i} className="group border border-gray-200 shadow-sm rounded-xl overflow-hidden bg-white hover:shadow-xl hover:-translate-y-1 hover:border-emerald-200 cursor-pointer transition-all duration-300">
+          <Card key={i} className="group border border-gray-200 shadow-sm rounded-xl overflow-hidden bg-white hover:shadow-xl hover:-translate-y-1 hover:border-amber-200 cursor-pointer transition-all duration-300">
             <CardContent className="p-5 sm:p-6 relative">
               <div className="flex justify-between items-start mb-5 relative z-10">
                 <div className="flex items-center gap-4">
@@ -53,30 +53,30 @@ export function BuyerRequirementCard() {
                     <Building2 className="h-5 w-5" />
                   </div>
                   <div>
-                    <h3 className="font-black text-gray-900 text-lg leading-tight group-hover:text-emerald-700 transition-colors">{req.company}</h3>
+                    <h3 className="font-black text-gray-900 text-lg leading-tight group-hover:text-amber-800 transition-colors">{req.company}</h3>
                     <p className="text-xs text-gray-500 font-semibold mt-1 bg-gray-50 inline-block px-2 py-0.5 rounded-md border border-gray-100">{req.type} • {req.location}</p>
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="text-xl font-black text-emerald-700 leading-none group-hover:scale-105 transform origin-right transition-transform">{req.price}</div>
+                  <div className="text-xl font-black text-[#994200] leading-none group-hover:scale-105 transform origin-right transition-transform">{req.price}</div>
                   <Badge variant="outline" className="mt-2 bg-gray-50/50 font-bold text-[10px] text-gray-500 border-gray-200 uppercase tracking-wider">{req.distance}</Badge>
                 </div>
               </div>
               
-              <div className="bg-gray-50/80 rounded-xl p-4 mb-5 border border-gray-100 flex justify-between items-center group-hover:bg-emerald-50/30 group-hover:border-emerald-100/50 transition-colors duration-300">
+              <div className="bg-gray-50/80 rounded-xl p-4 mb-5 border border-gray-100 flex justify-between items-center group-hover:bg-amber-50/30 group-hover:border-amber-100/50 transition-colors duration-300">
                 <div>
                   <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-1">Needs</p>
-                  <p className="font-bold text-gray-900 text-sm group-hover:text-emerald-800 transition-colors">{req.needs}</p>
+                  <p className="font-bold text-gray-900 text-sm group-hover:text-amber-900 transition-colors">{req.needs}</p>
                 </div>
                 <div className="text-right">
                   <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-1 flex items-center justify-end gap-1">
-                    <CalendarClock className="h-3 w-3 group-hover:text-emerald-600 transition-colors" /> Delivery
+                    <CalendarClock className="h-3 w-3 group-hover:text-amber-700 transition-colors" /> Delivery
                   </p>
-                  <p className="font-bold text-gray-900 text-sm group-hover:text-emerald-800 transition-colors">{req.delivery}</p>
+                  <p className="font-bold text-gray-900 text-sm group-hover:text-amber-900 transition-colors">{req.delivery}</p>
                 </div>
               </div>
 
-              <Button className="w-full bg-white hover:bg-emerald-50 text-emerald-800 border border-emerald-200 shadow-sm font-bold h-10 text-sm group-hover:bg-[#114232] group-hover:text-white group-hover:border-[#114232] transition-colors">
+              <Button className="w-full bg-white hover:bg-amber-50 text-[#8C3A00] border border-amber-200 shadow-sm font-bold h-10 text-sm group-hover:bg-[#994200] group-hover:text-white group-hover:border-[#994200] transition-colors">
                 Fulfill Requirement
               </Button>
             </CardContent>
