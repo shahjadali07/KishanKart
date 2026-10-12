@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { apiFetch } from '@/services/api';
 
 export type UserRole = 'FARMER' | 'BUYER' | 'ADMIN';
 
@@ -25,6 +26,8 @@ interface AuthContextType {
   signup: (userData: any) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
   verifyOtp: (code: string) => Promise<{ success: boolean; error?: string }>;
+  forgotPassword: (identifier: string) => Promise<{ success: boolean; error?: string }>;
+  resetPassword: (token: string, password: string) => Promise<{ success: boolean; error?: string }>;
   pendingVerification: { identifier: string; role: UserRole; name?: string; details?: any } | null;
   setPendingVerification: (data: any) => void;
 }
@@ -113,42 +116,45 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return { success: false, error: 'Password must be at least 6 characters.' };
       }
 
-      // Optional backend API integration attempt
-      const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
-      let backendSuccess = false;
+      // Primary path: real backend authentication.
+      // When the backend is reachable we trust its verdict (success OR failure);
+      // the local demo fallback only applies when the server is unreachable.
+      const response = await apiFetch('/api/auth/login', {
+        method: 'POST',
+        body: { email: identifier, password },
+        token: null,
+      });
 
-      try {
-        const response = await fetch(`${backendUrl}/api/auth/login`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: identifier, password }),
-        });
+      if (response.status !== 0) {
+        // Backend responded — honour its answer instead of silently succeeding.
+        if (response.ok && response.data?.success && response.data?.data) {
+          const result = response.data.data;
+          const apiUser: User = {
+            id: result._id || result.id || 'usr_' + Date.now(),
+            name: result.name || identifier,
+            email: result.email || identifier,
+            phone: result.phone,
+            role: (result.role as UserRole) || role,
+            isVerified: true,
+            token: result.token,
+            location: result.location || 'Lucknow Mandi Cluster',
+            avatar: role === 'FARMER' ? 'RK' : role === 'BUYER' ? 'SF' : 'AD',
+          };
 
-        if (response.ok) {
-          const result = await response.json();
-          if (result.success && result.data) {
-            const apiUser: User = {
-              id: result.data._id || 'usr_' + Date.now(),
-              name: result.data.name || (role === 'FARMER' ? 'Rajesh Kumar' : 'Sharma Foods'),
-              email: result.data.email || identifier,
-              role: (result.data.role as UserRole) || role,
-              isVerified: true,
-              token: result.data.token,
-              location: 'Lucknow Mandi Cluster',
-              avatar: role === 'FARMER' ? 'RK' : role === 'BUYER' ? 'SF' : 'AD',
-            };
-
-            setUser(apiUser);
-            localStorage.setItem('kisankart_user', JSON.stringify(apiUser));
-            setIsLoading(false);
-            return { success: true };
-          }
+          setUser(apiUser);
+          localStorage.setItem('kisankart_user', JSON.stringify(apiUser));
+          setIsLoading(false);
+          return { success: true };
         }
-      } catch (apiErr) {
-        // Fallback gracefully to offline verified credentials for demo / dev environment
+
+        setIsLoading(false);
+        return {
+          success: false,
+          error: response.error?.message || 'Invalid email or password.',
+        };
       }
 
-      // Validated local mock authentication
+      // Backend unreachable — validated local mock authentication for demo / dev.
       await new Promise((res) => setTimeout(res, 700));
 
       const authenticatedUser: User = {
@@ -174,6 +180,79 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signup = async (userData: any) => {
     setIsLoading(true);
+
+    // Primary path: create the account on the backend immediately.
+    // The backend has no OTP step, so the OTP screen that follows is a
+    // confirmation step over an already-created account.
+    const response = await apiFetch('/api/auth/register', {
+      method: 'POST',
+      body: {
+        name: userData.name || userData.businessName,
+        email: userData.email,
+        phone: String(userData.phone || '').replace(/\D/g, ''),
+        password: userData.password,
+        role: userData.role,
+        location: userData.location || userData.district || '',
+        ...(userData.role === 'FARMER'
+          ? {
+              farmDetails: {
+                village: userData.village,
+                district: userData.district,
+                state: userData.state,
+                pinCode: userData.pinCode,
+                farmSize: userData.farmSize,
+                farmType: userData.farmType,
+                crops: userData.crops,
+              },
+            }
+          : {}),
+        ...(userData.role === 'BUYER'
+          ? {
+              businessDetails: {
+                businessName: userData.businessName,
+                businessType: userData.businessType,
+                gstNumber: userData.gstNumber,
+                city: userData.city,
+                address: userData.address,
+              },
+            }
+          : {}),
+      },
+      token: null,
+    });
+
+    if (response.ok && response.data?.success && response.data?.data) {
+      const created = response.data.data;
+      setPendingVerification({
+        identifier: userData.phone || userData.email,
+        role: userData.role,
+        name: created.name || userData.name || userData.businessName,
+        details: { ...userData, registered: true },
+        apiUser: {
+          id: created._id || created.id,
+          name: created.name,
+          email: created.email,
+          phone: created.phone,
+          role: created.role,
+          location: created.location,
+          token: created.token,
+        },
+      });
+      setIsLoading(false);
+      return { success: true };
+    }
+
+    // Backend unreachable (status 0) -> fall back to the local OTP demo flow.
+    // Any other backend error is reported to the caller.
+    if (response.status !== 0) {
+      setIsLoading(false);
+      const message =
+        response.error?.errors && Object.keys(response.error.errors).length > 0
+          ? Object.values(response.error.errors).flat().join(' ')
+          : response.error?.message || 'Registration failed.';
+      return { success: false, error: message };
+    }
+
     await new Promise((res) => setTimeout(res, 800));
 
     setPendingVerification({
@@ -189,6 +268,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const verifyOtp = async (code: string) => {
     setIsLoading(true);
+
+    // Account was already created on the backend during signup;
+    // this step just completes the UI verification flow.
+    if (pendingVerification?.details?.registered && pendingVerification?.apiUser) {
+      const apiUser = pendingVerification.apiUser;
+      const newUser: User = {
+        id: apiUser.id || 'usr_' + Date.now(),
+        name: apiUser.name || pendingVerification.name || 'KisanKart User',
+        email: apiUser.email || '',
+        phone: apiUser.phone,
+        role: (apiUser.role as UserRole) || pendingVerification.role,
+        location: apiUser.location || 'Lucknow',
+        isVerified: true,
+        token: apiUser.token,
+        avatar: pendingVerification.role === 'FARMER' ? 'RK' : 'SF',
+      };
+      setUser(newUser);
+      localStorage.setItem('kisankart_user', JSON.stringify(newUser));
+      setPendingVerification(null);
+      setIsLoading(false);
+      return { success: true };
+    }
+
     await new Promise((res) => setTimeout(res, 600));
 
     if (code !== '123456' && code.length !== 6) {
@@ -221,9 +323,49 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logout = () => {
+    // Fire-and-forget: clear the server session when the backend is reachable.
+    apiFetch('/api/auth/logout', { method: 'POST' }).catch(() => undefined);
     setUser(null);
     localStorage.removeItem('kisankart_user');
     router.replace('/login');
+  };
+
+  const forgotPassword = async (identifier: string) => {
+    const response = await apiFetch('/api/auth/forgot-password', {
+      method: 'POST',
+      body: { identifier },
+      token: null,
+    });
+
+    if (response.status !== 0) {
+      if (response.ok) {
+        return { success: true };
+      }
+      return { success: false, error: response.error?.message || 'Could not send reset link.' };
+    }
+
+    // Backend unreachable — simulate success for the demo flow.
+    await new Promise((res) => setTimeout(res, 800));
+    return { success: true };
+  };
+
+  const resetPassword = async (token: string, password: string) => {
+    const response = await apiFetch('/api/auth/reset-password', {
+      method: 'POST',
+      body: { token, password },
+      token: null,
+    });
+
+    if (response.status !== 0) {
+      if (response.ok) {
+        return { success: true };
+      }
+      return { success: false, error: response.error?.message || 'Invalid or expired reset token.' };
+    }
+
+    // Backend unreachable — simulate success for the demo flow.
+    await new Promise((res) => setTimeout(res, 700));
+    return { success: true };
   };
 
   return (
@@ -235,6 +377,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         signup,
         logout,
         verifyOtp,
+        forgotPassword,
+        resetPassword,
         pendingVerification,
         setPendingVerification,
       }}

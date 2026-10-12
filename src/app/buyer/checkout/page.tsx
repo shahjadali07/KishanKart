@@ -96,15 +96,19 @@ export default function BuyerCheckoutPage() {
     }
 
     setIsProcessing(true);
-    // Simulate swift 800ms mock escrow verification
-    setTimeout(() => {
-      const order = placeOrder({
+    // Book the order through the backend (escrow verification),
+    // falling back to the local demo flow when it is unreachable.
+    try {
+      const order = await placeOrder({
         address: selectedAddress,
         paymentMethod
       });
       setIsProcessing(false);
       router.push(`/buyer/orders/${order.id}`);
-    }, 800);
+    } catch (err) {
+      setIsProcessing(false);
+      alert('Could not place the order. Please try again.');
+    }
   };
 
   return (

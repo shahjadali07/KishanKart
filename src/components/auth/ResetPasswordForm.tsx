@@ -1,23 +1,32 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, CheckCircle2, ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { PasswordInput, PasswordStrength } from './PasswordInput';
 import { AuthError, AuthSuccess, LoadingButtonState } from './AuthFeedback';
+import { useAuth } from '@/context/AuthContext';
 
 export function ResetPasswordForm() {
   const router = useRouter();
+  const { resetPassword } = useAuth();
 
+  const [token, setToken] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // Read the reset token from the URL once mounted (avoids blocking prerender).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setToken(params.get('token') || '');
+  }, []);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
@@ -31,13 +40,18 @@ export function ResetPasswordForm() {
     }
 
     setIsLoading(true);
+    const result = await resetPassword(token, password);
+    setIsLoading(false);
+
+    if (!result.success) {
+      setError(result.error || 'Could not reset the password. The link may have expired.');
+      return;
+    }
+
+    setSuccess(true);
     setTimeout(() => {
-      setIsLoading(false);
-      setSuccess(true);
-      setTimeout(() => {
-        router.push('/login');
-      }, 1500);
-    }, 700);
+      router.push('/login');
+    }, 1500);
   };
 
   return (

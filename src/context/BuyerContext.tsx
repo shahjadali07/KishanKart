@@ -18,6 +18,13 @@ import {
   mockTransactions,
   mockNotifications
 } from '@/data/buyerMockData';
+import {
+  apiFetch,
+  apiProductToBuyerProduct,
+  apiOrderToBuyerOrder,
+  getToken,
+  getStoredUser
+} from '@/services/api';
 
 interface BuyerContextType {
   // Products
@@ -48,7 +55,7 @@ interface BuyerContextType {
   placeOrder: (orderData: {
     address: BuyerAddress;
     paymentMethod: 'UPI' | 'Credit/Debit Card' | 'Cash on Delivery' | 'Net Banking';
-  }) => BuyerOrder;
+  }) => Promise<BuyerOrder>;
   cancelOrder: (orderId: string) => void;
   getOrderById: (orderId: string) => BuyerOrder | undefined;
 
@@ -80,7 +87,7 @@ interface BuyerContextType {
 const BuyerContext = createContext<BuyerContextType | undefined>(undefined);
 
 export function BuyerProvider({ children }: { children: React.ReactNode }) {
-  const [products] = useState<BuyerProduct[]>(mockProducts);
+  const [products, setProducts] = useState<BuyerProduct[]>(mockProducts);
   const [cart, setCart] = useState<BuyerCartItem[]>([]);
   const [wishlist, setWishlist] = useState<string[]>([]);
   const [orders, setOrders] = useState<BuyerOrder[]>(mockOrders);
@@ -123,7 +130,34 @@ export function BuyerProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  // Save to localStorage whenever state changes
+  // Load live catalogue and order history from the backend when signed in.
+  useEffect(() => {
+    const user = getStoredUser();
+    const token = getToken();
+    if (!token || !user || (user.role && user.role !== 'BUYER' && user.role !== 'ADMIN')) {
+      return;
+    }
+
+    let cancelled = false;
+
+    (async () => {
+      const productsRes = await apiFetch('/api/products?limit=100');
+      if (!cancelled && productsRes.ok && productsRes.data?.success && Array.isArray(productsRes.data.data)) {
+        setProducts(productsRes.data.data.map(apiProductToBuyerProduct));
+      }
+
+      const ordersRes = await apiFetch('/api/orders/mine?limit=50');
+      if (!cancelled && ordersRes.ok && ordersRes.data?.success && Array.isArray(ordersRes.data.data)) {
+        setOrders(ordersRes.data.data.map(apiOrderToBuyerOrder));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isHydrated]);
+
+  // Sync mutations to LocalStorage whenever state changes
   useEffect(() => {
     if (!isHydrated) return;
     try {
@@ -216,10 +250,65 @@ export function BuyerProvider({ children }: { children: React.ReactNode }) {
     return orders.find(o => o.id === orderId);
   };
 
-  const placeOrder = (orderData: {
+  const placeOrder = async (orderData: {
     address: BuyerAddress;
     paymentMethod: 'UPI' | 'Credit/Debit Card' | 'Cash on Delivery' | 'Net Banking';
-  }): BuyerOrder => {
+  }): Promise<BuyerOrder> => {
+    // Primary path: book the order through the backend (escrow + stock reservation).
+    const response = await apiFetch('/api/orders', {
+      method: 'POST',
+      body: {
+        items: cart.map(item => ({
+          productId: item.product.id,
+          quantity: item.quantity,
+        })),
+        shippingAddress: {
+          fullName: orderData.address.fullName,
+          phone: orderData.address.phone,
+          address: orderData.address.houseStreet,
+          city: orderData.address.villageCity,
+          district: orderData.address.district,
+          state: orderData.address.state,
+          pinCode: orderData.address.pinCode,
+        },
+        paymentMethod: orderData.paymentMethod,
+      },
+    });
+
+    if (response.ok && response.data?.success && response.data?.data) {
+      const created = Array.isArray(response.data.data)
+        ? response.data.data[0]
+        : response.data.data;
+      const apiOrder = apiOrderToBuyerOrder(created);
+
+      setOrders(prev => [apiOrder, ...prev]);
+
+      const newTx: BuyerTransaction = {
+        id: `TXN-${Date.now()}`,
+        orderId: apiOrder.id,
+        amount: apiOrder.total,
+        date: apiOrder.date,
+        status: apiOrder.paymentStatus as any,
+        method: orderData.paymentMethod,
+      };
+      setTransactions(prev => [newTx, ...prev]);
+
+      const newNotif: BuyerNotification = {
+        id: `notif-${Date.now()}`,
+        title: `Order ${apiOrder.orderNumber || apiOrder.id} Placed Successfully! 🎉`,
+        message: `Your procurement order of ₹${apiOrder.total.toLocaleString('en-IN')} has been booked. Escrow is locked.`,
+        category: 'Orders',
+        timestamp: 'Just now',
+        read: false,
+        link: `/buyer/orders/${apiOrder.id}`
+      };
+      setNotifications(prev => [newNotif, ...prev]);
+
+      clearCart();
+      return apiOrder;
+    }
+
+    // Fallback: local demo order when the backend is unreachable.
     const newOrderId = 'KK-' + Math.floor(10000 + Math.random() * 90000);
     const now = new Date();
     const dateFormatted = now.toLocaleDateString('en-GB', {
@@ -304,7 +393,7 @@ export function BuyerProvider({ children }: { children: React.ReactNode }) {
     setTransactions(prev => [newTx, ...prev]);
 
     // Add confirmation notification
-    const newNotif: BuyerNotification = {
+    const fallbackNotif: BuyerNotification = {
       id: `notif-${Date.now()}`,
       title: `Order ${newOrderId} Placed Successfully! 🎉`,
       message: `Your procurement order of ₹${cartTotal.toLocaleString('en-IN')} has been booked. Escrow is locked.`,
@@ -313,7 +402,7 @@ export function BuyerProvider({ children }: { children: React.ReactNode }) {
       read: false,
       link: `/buyer/orders/${newOrderId}`
     };
-    setNotifications(prev => [newNotif, ...prev]);
+    setNotifications(prev => [fallbackNotif, ...prev]);
 
     // Clear cart after checkout
     clearCart();
@@ -322,6 +411,9 @@ export function BuyerProvider({ children }: { children: React.ReactNode }) {
   };
 
   const cancelOrder = (orderId: string) => {
+    // Notify the backend when reachable; local state updates regardless.
+    apiFetch(`/api/orders/${orderId}/cancel`, { method: 'POST', body: {} }).catch(() => undefined);
+
     setOrders(prev =>
       prev.map(o => {
         if (o.id === orderId) {

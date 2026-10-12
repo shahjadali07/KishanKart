@@ -25,6 +25,13 @@ import {
   initialFarmerOffers,
   initialFarmerNotifications
 } from '@/data/farmerMockData';
+import {
+  apiFetch,
+  apiProductToFarmerProduct,
+  apiOrderToFarmerOrder,
+  getToken,
+  getStoredUser
+} from '@/services/api';
 
 interface FarmerContextType {
   // Profile
@@ -101,6 +108,7 @@ export function FarmerProvider({ children }: { children: React.ReactNode }) {
   const [deliveries, setDeliveries] = useState<FarmerDeliveryItem[]>(initialFarmerDeliveries);
   const [offers, setOffers] = useState<FarmerOffer[]>(initialFarmerOffers);
   const [notifications, setNotifications] = useState<FarmerNotification[]>(initialFarmerNotifications);
+  const [dashboardStatsOverride, setDashboardStatsOverride] = useState<FarmerDashboardStats | null>(null);
 
   // Initialize from LocalStorage
   useEffect(() => {
@@ -134,6 +142,46 @@ export function FarmerProvider({ children }: { children: React.ReactNode }) {
     } catch (e) {
       console.error('Error loading farmer stored state:', e);
     }
+  }, []);
+
+  // Load live listings, orders and dashboard stats from the backend.
+  useEffect(() => {
+    const user = getStoredUser();
+    const token = getToken();
+    if (!token || !user || (user.role && user.role !== 'FARMER' && user.role !== 'ADMIN')) {
+      return;
+    }
+
+    let cancelled = false;
+
+    (async () => {
+      const productsRes = await apiFetch('/api/products/mine?limit=100');
+      if (!cancelled && productsRes.ok && productsRes.data?.success && Array.isArray(productsRes.data.data)) {
+        setProducts(productsRes.data.data.map(apiProductToFarmerProduct));
+      }
+
+      const ordersRes = await apiFetch('/api/orders/farmer?limit=50');
+      if (!cancelled && ordersRes.ok && ordersRes.data?.success && Array.isArray(ordersRes.data.data)) {
+        setOrders(ordersRes.data.data.map(apiOrderToFarmerOrder));
+      }
+
+      const statsRes = await apiFetch('/api/dashboard/farmer');
+      if (!cancelled && statsRes.ok && statsRes.data?.success && statsRes.data.data) {
+        const s = statsRes.data.data;
+        setDashboardStatsOverride({
+          totalProducts: Number(s.totalProducts ?? 0),
+          activeOrders: Number(s.activeOrders ?? 0),
+          totalRevenue: Number(s.totalRevenue ?? 0),
+          availableStock: Number(s.availableStock ?? 0),
+          revenueGrowth: 18.4,
+          lowStockCount: Number(s.lowStockCount ?? 0),
+        });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Sync mutations to LocalStorage
@@ -185,6 +233,37 @@ export function FarmerProvider({ children }: { children: React.ReactNode }) {
       save(STORAGE_KEYS.STOCK_HISTORY, updatedHistory);
     }
 
+    // Persist the listing on the backend and reconcile the saved copy.
+    apiFetch('/api/products', {
+      method: 'POST',
+      body: {
+        name: newProduct.name,
+        hindiName: newProduct.hindiName,
+        description: newProduct.description,
+        category: newProduct.category,
+        price: newProduct.price,
+        unit: newProduct.unit,
+        availableQuantity: newProduct.availableQuantity,
+        minimumOrderQuantity: newProduct.minimumOrderQuantity,
+        lowStockThreshold: newProduct.lowStockThreshold,
+        isOrganic: newProduct.isOrganic,
+        grade: newProduct.grade,
+        images: newProduct.images,
+        mandi: newProduct.mandi,
+        location: newProduct.location,
+        harvestDate: newProduct.harvestDate
+      }
+    }).then(res => {
+      if (res.ok && res.data?.success && res.data?.data) {
+        const saved = apiProductToFarmerProduct(res.data.data);
+        setProducts(prev => {
+          const next = prev.map(p => (p.id === newProduct.id ? saved : p));
+          save(STORAGE_KEYS.PRODUCTS, next);
+          return next;
+        });
+      }
+    }).catch(() => undefined);
+
     return newProduct;
   };
 
@@ -201,12 +280,19 @@ export function FarmerProvider({ children }: { children: React.ReactNode }) {
     });
     setProducts(updated);
     save(STORAGE_KEYS.PRODUCTS, updated);
+
+    apiFetch(`/api/products/${id}`, {
+      method: 'PATCH',
+      body: updatedFields
+    }).catch(() => undefined);
   };
 
   const deleteProduct = (id: string) => {
     const updated = products.filter(p => p.id !== id);
     setProducts(updated);
     save(STORAGE_KEYS.PRODUCTS, updated);
+
+    apiFetch(`/api/products/${id}`, { method: 'DELETE' }).catch(() => undefined);
   };
 
   const getProductById = (id: string) => {
@@ -241,6 +327,12 @@ export function FarmerProvider({ children }: { children: React.ReactNode }) {
     setStockHistory(updatedHistory);
     save(STORAGE_KEYS.STOCK_HISTORY, updatedHistory);
 
+    // Persist the adjustment on the backend.
+    apiFetch(`/api/products/${productId}/stock`, {
+      method: 'POST',
+      body: { changeType: 'SET', newStock, reason }
+    }).catch(() => undefined);
+
     // Generate low stock or out of stock notification if applicable
     if (newStock === 0) {
       addNotification({
@@ -264,6 +356,15 @@ export function FarmerProvider({ children }: { children: React.ReactNode }) {
     if (!target) return;
     const newStock = Math.max(0, target.availableQuantity + delta);
     updateStock(productId, newStock, reason);
+
+    apiFetch(`/api/products/${productId}/stock`, {
+      method: 'POST',
+      body: {
+        changeType: delta >= 0 ? 'ADD' : 'SUBTRACT',
+        changeAmount: Math.abs(delta),
+        reason
+      }
+    }).catch(() => undefined);
   };
 
   // Orders Workflow
@@ -330,6 +431,12 @@ export function FarmerProvider({ children }: { children: React.ReactNode }) {
 
     setOrders(updatedOrders);
     save(STORAGE_KEYS.ORDERS, updatedOrders);
+
+    // Persist the transition on the backend.
+    apiFetch(`/api/orders/${orderId}/status`, {
+      method: 'PATCH',
+      body: { status: newStatus, note: note || `Order updated to ${newStatus}` }
+    }).catch(() => undefined);
 
     // Send notification
     addNotification({
@@ -426,7 +533,7 @@ export function FarmerProvider({ children }: { children: React.ReactNode }) {
 
   const totalStockCount = products.reduce((sum, p) => sum + p.availableQuantity, 0);
 
-  const stats: FarmerDashboardStats = {
+  const stats: FarmerDashboardStats = dashboardStatsOverride ?? {
     totalProducts: products.length,
     activeOrders: activeOrdersCount,
     totalRevenue: totalEarnings || 148250,

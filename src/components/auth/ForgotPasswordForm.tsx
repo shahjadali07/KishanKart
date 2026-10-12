@@ -5,14 +5,16 @@ import Link from 'next/link';
 import { ArrowLeft, Mail, ArrowRight, CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { AuthError, AuthSuccess, LoadingButtonState } from './AuthFeedback';
+import { useAuth } from '@/context/AuthContext';
 
 export function ForgotPasswordForm() {
+  const { forgotPassword } = useAuth();
   const [identifier, setIdentifier] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!identifier) {
       setError('Please enter your registered email or mobile number.');
@@ -21,10 +23,14 @@ export function ForgotPasswordForm() {
     setError('');
     setIsLoading(true);
 
-    setTimeout(() => {
-      setIsLoading(false);
-      setSent(true);
-    }, 800);
+    const result = await forgotPassword(identifier);
+    setIsLoading(false);
+
+    if (!result.success) {
+      setError(result.error || 'Could not send the reset link. Please try again.');
+      return;
+    }
+    setSent(true);
   };
 
   return (
